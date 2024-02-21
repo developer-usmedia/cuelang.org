@@ -8,8 +8,9 @@ import { AutocompleteQuerySuggestionsHit } from '@algolia/autocomplete-plugin-qu
 import { AutocompleteApi } from '@algolia/autocomplete-js/dist/esm/types';
 import { BaseItem, OnSubmitParams } from '@algolia/autocomplete-shared/dist/esm/core';
 import { BaseWidget } from './base-widget';
-import { mapToAlgoliaFilters, parseQuery } from '../helpers/search';
-import { SearchItem } from '../interfaces/search';
+import { getInputNameForFacet, mapToAlgoliaFilters, parseQuery } from '../helpers/search';
+import { SearchFacet, SearchFacets, SearchItem } from '../interfaces/search';
+import { cleanObject } from 'assets/ts/helpers/cleaner';
 
 export class SearchAutocomplete extends BaseWidget {
     public static readonly NAME = 'search-autocomplete';
@@ -21,6 +22,7 @@ export class SearchAutocomplete extends BaseWidget {
     private querySuggestionsPlugin: AutocompletePlugin<AutocompleteQuerySuggestionsHit, undefined>;
     private autocomplete: AutocompleteApi<BaseItem>;
     private readonly placeholder: string;
+    private readonly facetInputs: NodeListOf<HTMLInputElement>;
 
     constructor(element: HTMLElement) {
         super(element);
@@ -30,6 +32,7 @@ export class SearchAutocomplete extends BaseWidget {
         this.searchType = this.element.dataset.searchAutocomplete || '';
         this.searchbarSize = this.element.dataset.searchbarSize;
         this.placeholder = this.element.dataset.searchbarPlaceholder ?? '';
+        this.facetInputs = document.querySelectorAll<HTMLInputElement>('[data-search-results] input[name^="facet-"]');
     }
 
     public static registerWidget(): void {
@@ -57,7 +60,17 @@ export class SearchAutocomplete extends BaseWidget {
         if (this.searchType === 'results') {
             const url = new URL(window.location.href);
             const searchParams = new URLSearchParams(url.search);
-            const query = searchParams.get('q');
+            let query = searchParams.get('q') || '';
+
+            // Get facets from hidden inputs which are not in the url
+            const facetsFromInputs = this.getHiddenInputFacets();
+            for (const [facet, values] of Object.entries(facetsFromInputs) ) {
+                const inputName = getInputNameForFacet(facet as SearchFacet);
+                query += ` ${ values.map((value: string) => {
+                    return `${ inputName }:${ value.includes(' ') ? `"${ value }"` : value }`;
+                }).join(' ')}`;
+            }
+
             if (query && query !== '') {
                 this.autocomplete.setQuery(query);
             }
@@ -247,6 +260,26 @@ export class SearchAutocomplete extends BaseWidget {
                 submitButton: `button button--icon searchbar__button${ this.searchbarSize === 'small' ? ' button--small' : '' }`,
             },
         });
+    }
+
+    private getHiddenInputFacets(): SearchFacets {
+        if (!this.facetInputs) {
+            return {};
+        }
+
+        const facets: SearchFacets = {
+            [SearchFacet.TAGS]: [],
+            [SearchFacet.CONTENT_TYPE]: [],
+        };
+
+        this.facetInputs.forEach((input) => {
+            const name = input.getAttribute('name').replace('facet-', '');
+            if (facets[name] && input.value && input.value !== '') {
+                facets[name].push(input.value);
+            }
+        });
+
+        return cleanObject<SearchFacets>(facets);
     }
 }
 
